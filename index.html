@@ -9,7 +9,7 @@
 
     <script src="https://unpkg.com/simple-statistics@2.1.0/dist/simple-statistics.js"></script>
     <script src="http://cdn.jsdelivr.net/jstat/latest/jstat.min.js"></script>
-    <script src="http://cs.stanford.edu/people/karpathy/convnetjs/build/convnet.js"></script>
+    <script src="vendor/convnet.js"></script>
 
     <link href="css/bootstrap-formhelpers.min.css" rel="stylesheet">
     <script src="js/bootstrap-formhelpers.min.js"></script>
@@ -129,7 +129,7 @@
 
     var dataloaded = false;
 
-    var batchSize = 15;
+    var batchSize = 100;
     var noOfIterations = 5;
     var windowSize = 50;
     var paused = false;
@@ -216,7 +216,7 @@
             $("#pause").removeClass("disabled");
         }
         else {
-            setTimeout(startTrain, 200); // keep checking
+            setTimeout(function() {startTrain(FPS);}, 200); // keep checking
             console.log('waiting');
         }
     }
@@ -256,15 +256,11 @@
                 acc100Graph.add(totalIterations, avg100);
                 acc100Graph.drawSelf(document.getElementById("acc100"));
 
-                if (totalIterations >= 1000) {
-                    acc1000Graph.add(totalIterations, avg1000);
-                    acc1000Graph.drawSelf(document.getElementById("acc1000"));
-                }
+                acc1000Graph.add(totalIterations, avg1000);
+                acc1000Graph.drawSelf(document.getElementById("acc1000"));
 
-                if (totalIterations >= maxResults) {
-                    accMaxGraph.add(totalIterations, avgMax);
-                    accMaxGraph.drawSelf(document.getElementById("accMax"));
-                }
+                accMaxGraph.add(totalIterations, avgMax);
+                accMaxGraph.drawSelf(document.getElementById("accMax"));
 
             }
         }
@@ -413,7 +409,6 @@
         var currentEMGWindowStart = +0;
         var currentEMGWindowEnd = +0;
 
-        // beybda2 men tane wa7ed mesh men awel wa7ed fe kol loop
         for (var i = 1; i <= bachSize; i++) {
 
             do {
@@ -488,7 +483,7 @@
 
                 //if nn comes from json import
                 if(trainer == undefined) {
-                    trainer = new convnetjs.Trainer(net, {method: 'adadelta', learning_rate: 0.001, l2_decay: 0.001, batch_size: 5})
+                    trainer = new convnetjs.Trainer(net, {method: 'adadelta', learning_rate: 0.001, l2_decay: 0.001, batch_size: batchSize})
                 }
 
                 var stats = trainer.train(x, [actualForce]);
@@ -559,7 +554,8 @@
 
     var reset_all = function() {
         // reinit trainer
-        trainer = new convnetjs.Trainer(net, {method: 'adadelta', learning_rate: 0.001, l2_decay: 0.001, batch_size: 5});
+        trainer = new convnetjs.Trainer(net, {method: 'adadelta', learning_rate: 0.001, l2_decay: 0.001, batch_size: batchSize});
+
         update_net_param_display();
 
         // reinit windows that keep track of val/train accuracies

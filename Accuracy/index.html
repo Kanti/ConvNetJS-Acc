@@ -1,0 +1,405 @@
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>EMG to Force - Train Neural Network</title>
+  <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
+  <script src="http://evanplaice.github.io/jquery-csv/src/jquery.csv.js"></script>
+  <script src="http://netdna.bootstrapcdn.com/bootstrap/3.1.1/js/bootstrap.min.js"></script>
+  <link href="http://netdna.bootstrapcdn.com/bootstrap/3.1.1/css/bootstrap.min.css" rel="stylesheet">
+
+  <script src="https://unpkg.com/simple-statistics@2.1.0/dist/simple-statistics.js"></script>
+  <script src="http://cdn.jsdelivr.net/jstat/latest/jstat.min.js"></script>
+  <script src="../vendor/convnet.js"></script>
+
+  <link href="css/bootstrap-formhelpers.min.css" rel="stylesheet">
+  <script src="js/bootstrap-formhelpers.min.js"></script>
+  <script src="js/style.js"></script>
+
+  <script src="js/fft.js"></script>
+  <script src="js/vis.js"></script>
+  <script src="js/util.js"></script>
+</head>
+
+<body>
+  <div class="container">
+    <div class="row">
+      <div class="col-lg-8 col-sm-12 col-12">
+        <h4>Input:</h4>
+        <div class="input-group">
+          <label class="input-group-btn">
+                  <span class="btn btn-primary">
+                      Browse&hellip; <input id="files" type="file" style="display: none;" name="files[]" multiple>
+                  </span>
+          </label>
+          <input type="text" class="form-control" readonly>
+        </div>
+        <span class="help-block">
+              Select a cvs file to predict the grip force using pre-trained network
+          </span>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-lg-8 col-sm-12 col-12">
+        <div class="form-group">
+          <label for="InitializeNeural">Instantiate a Pre-trained Network:</label>
+          <textarea class="form-control" rows="15" id="newnet"
+                    placeholder="Paste your pre-trained network here"></textarea>
+          <button id="buttonnn" type="button" class="btn btn-primary disabled" onclick="change_net()">Initialize
+                                                                                                      network
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-lg-8 col-sm-12 col-12">
+        <div class="form-group">
+          <div class="input-group">
+            <span class="input-group-addon">Batch Size</span>
+            <input id="batchSize" type="number" class="form-control" name="batchSize" min="1" max="1000" value="100">
+          </div>
+          <div class="input-group">
+            <span class="input-group-addon">Iterations &nbsp;</span>
+            <input id="Iterations" type="number" class="form-control" name="Iterations" min="1" max="100" value="100">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-lg-8 col-sm-12 col-12">
+        <button id="start" type="button" class="btn btn-primary disabled" onclick="startPrediction(10)">Start
+                                                                                                        Prediction
+        </button>
+        <button id="stop" type="button" class="btn btn-primary disabled" onclick="stopPrediction()">Stop Prediction
+        </button>
+        <!-- <button id="save" type="button" class="btn btn-primary disabled" onclick="saveNetwork()">Save Network</button> -->
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-lg-8 col-sm-12 col-12">
+        <h4>Result:</h4>
+        <div id="report">
+          Iteration Number: 0<br>Minimum Prediction Accuracy: 0%<br>Average Prediction Accuracy: 0%<br>Maximum
+          Prediction Accuarcy: 0%
+          <br>Current Prediction Accuarcy: 0%
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-lg-8 col-sm-12 col-12">
+        <div id="divTable"></div>
+      </div>
+    </div>
+    <script>
+
+
+      var f2t = cnnutil.f2t;
+
+      var dataloaded = false;
+
+      var iterations = 1;
+      var batchSize = 200;
+      var windowSize = 50;
+      var totalAccuracy = [];
+
+      var layer_defs = [], net, trainer;
+
+      var t = "";
+
+
+      $( document )
+        .ready( function () {
+          if ( isAPIAvailable() ) {
+            $( '#files' )
+              .bind( 'change', handleFileSelect );
+          }
+          $( "#newnet" )
+            .val( t );
+          //eval($("#newnet").val());
+        } );
+
+      function isAPIAvailable () {
+        // Check for the various File API support.
+        if ( window.File && window.FileReader && window.FileList && window.Blob ) {
+          // Great success! All the File APIs are supported.
+          return true;
+        } else {
+          // source: File API availability - http://caniuse.com/#feat=fileapi
+          // source: <output> availability - http://html5doctor.com/the-output-element/
+          document.writeln( 'The HTML5 APIs used in this form are only available in the following browsers:<br />' );
+          // 6.0 File API & 13.0 <output>
+          document.writeln( ' - Google Chrome: 13.0 or later<br />' );
+          // 3.6 File API & 6.0 <output>
+          document.writeln( ' - Mozilla Firefox: 6.0 or later<br />' );
+          // 10.0 File API & 10.0 <output>
+          document.writeln( ' - Internet Explorer: Not supported (partial support expected in 10.0)<br />' );
+          // ? File API & 5.1 <output>
+          document.writeln( ' - Safari: Not supported<br />' );
+          // ? File API & 9.2 <output>
+          document.writeln( ' - Opera: Not supported' );
+          return false;
+        }
+      }
+
+      function handleFileSelect ( evt ) {
+        var files = evt.target.files; // FileList object
+        file = files[ 0 ];
+
+        // read the file metadata
+        var output = ''
+        output += '<span style="font-weight:bold;">' + escape( file.name ) + '</span><br />\n';
+        output += ' - FileType: ' + (file.type || 'n/a') + '<br />\n';
+        output += ' - FileSize: ' + file.size + ' bytes<br />\n';
+        output += ' - LastModified: ' + (file.lastModifiedDate ? file.lastModifiedDate.toLocaleDateString() : 'n/a')
+          + '<br />\n';
+
+        $( "#buttonnn" )
+          .removeClass( "disabled" )
+      }
+
+      function startPrediction ( FPS ) {
+
+        loadData( file );
+        iterations = $( "#Iterations" ).val();
+        batchSize = $( "#batchSize" ).val();
+
+        if ( dataloaded == true ) {
+          console.log( 'starting!' );
+          dataPreProcessing( data, windowSize );
+          trainingInterval = setInterval( tick, 1000 / FPS );  // lets go!
+          $( "#start" )
+            .addClass( "disabled" );
+          $( "#stop" )
+            .removeClass( "disabled" );
+        } else {
+          setTimeout( startPrediction, 200 ); // keep checking
+          console.log( 'waiting' );
+        }
+      }
+
+      function tick () {
+        if ( dataloaded == true ) {
+          sample_training_instance( data, windowSize, batchSize );
+          prediction( file, windowSize );
+          createResultTable();
+
+          if ( --iterations === 0 ) {
+            window.clearInterval( trainingInterval );
+            $( "#stop" )
+              .addClass( "disabled" );
+          }
+        }
+      }
+
+      function stopPrediction () {
+        console.log( "train stop called" );
+        clearInterval( trainingInterval );
+        $( "#stop" )
+          .addClass( "disabled" );
+      }
+
+      function MapData ( input ) {
+        //output = output_start + ((output_end - output_start) / (input_end - input_start)) * (input - input_start);
+        //var output = 0.0 + ((1.0 - 0.0) / (128.0 - -128.0)) * (input - -128);
+        //var output = 0.0 + ((256.0 - 0.0) / (128.0 - -128.0)) * (input - -128);
+        //return output;
+        return input;
+      }
+
+      function loadData ( file ) {
+        var reader = new FileReader();
+        reader.readAsText( file );
+        reader.onload = function ( event ) {
+          var csv = event.target.result;
+          data = $.csv.toArrays( csv );
+          dataloaded = true;
+        };
+        reader.onerror = function () {
+          alert( 'Unable to read ' + file.fileName );
+        };
+      }
+
+      function dataPreProcessing ( data, windowSize ) {
+
+        features = [];
+        preprocessedData = [];
+        preprocessedData[ 0 ] = [];
+        preprocessedData[ 1 ] = [];
+        preprocessedData[ 2 ] = [];
+        preprocessedData[ 3 ] = [];
+        preprocessedData[ 4 ] = [];
+        preprocessedData[ 5 ] = [];
+        preprocessedData[ 6 ] = [];
+        preprocessedData[ 7 ] = [];
+
+        var dataLength = data.length;
+
+
+        //data preperation
+        Emg1Data = [], Emg2Data = [], Emg3Data = [], Emg4Data = [], Emg5Data = [], Emg6Data = [], Emg7Data = [], Emg8Data = [];
+        for ( var x = 1; x < data.length; x++ ) {
+          Emg1Data.push( +MapData( data[ x ][ 0 ] ) );
+          Emg2Data.push( +MapData( data[ x ][ 1 ] ) );
+          Emg3Data.push( +MapData( data[ x ][ 2 ] ) );
+          Emg4Data.push( +MapData( data[ x ][ 3 ] ) );
+          Emg5Data.push( +MapData( data[ x ][ 4 ] ) );
+          Emg6Data.push( +MapData( data[ x ][ 5 ] ) );
+          Emg7Data.push( +MapData( data[ x ][ 6 ] ) );
+          Emg8Data.push( +MapData( data[ x ][ 7 ] ) );
+        }
+
+      }
+
+      function sample_training_instance ( data, windowSize, bachSize ) {
+        features = [], force = [];
+        preprocessedData = [];
+        preprocessedData[ 0 ] = [];
+        preprocessedData[ 1 ] = [];
+        preprocessedData[ 2 ] = [];
+        preprocessedData[ 3 ] = [];
+        preprocessedData[ 4 ] = [];
+        preprocessedData[ 5 ] = [];
+        preprocessedData[ 6 ] = [];
+        preprocessedData[ 7 ] = [];
+
+        var dataLength = data.length;
+        var currentEMGWindowStart = +0;
+        var currentEMGWindowEnd = +0;
+
+        for ( var i = 1; i <= bachSize; i++ ) {
+
+          do {
+            currentEMGWindowStart = Math.floor( Math.random() * (dataLength - +windowSize - 1) );
+            currentEMGWindowEnd = currentEMGWindowStart + +windowSize;
+          } while ( data[ currentEMGWindowStart ][ 8 ] != data[ currentEMGWindowEnd ][ 8 ]
+          || data[ currentEMGWindowStart ][ 9 ] != data[ currentEMGWindowEnd ][ 9 ] )
+
+          preprocessedData[ 0 ].push( Emg1Data.slice( currentEMGWindowStart, currentEMGWindowEnd ) );
+          preprocessedData[ 1 ].push( Emg2Data.slice( currentEMGWindowStart, currentEMGWindowEnd ) );
+          preprocessedData[ 2 ].push( Emg3Data.slice( currentEMGWindowStart, currentEMGWindowEnd ) );
+          preprocessedData[ 3 ].push( Emg4Data.slice( currentEMGWindowStart, currentEMGWindowEnd ) );
+          preprocessedData[ 4 ].push( Emg5Data.slice( currentEMGWindowStart, currentEMGWindowEnd ) );
+          preprocessedData[ 5 ].push( Emg6Data.slice( currentEMGWindowStart, currentEMGWindowEnd ) );
+          preprocessedData[ 6 ].push( Emg7Data.slice( currentEMGWindowStart, currentEMGWindowEnd ) );
+          preprocessedData[ 7 ].push( Emg8Data.slice( currentEMGWindowStart, currentEMGWindowEnd ) );
+
+          force.push( data[ currentEMGWindowStart ][ 8 ] );
+        }
+
+      }
+
+      function prediction ( file, windowSize ) {
+        var trainAccWindow = new cnnutil.Window( 100 );
+        var avloss = 0.0;
+        var actualForce = 0;
+        predictedForce = [];
+
+        var trueval = 0, falseval = 0;
+        traingSetLength = preprocessedData[ 0 ].length;
+
+        predictedForce = [];
+
+        for ( var i = 0; i < traingSetLength; i++ ) {
+
+          var x = new convnetjs.Vol( +windowSize, 8, 1, 0.0 );
+
+          for ( var idx = 0; idx < +windowSize; idx++ ) {
+            for ( var emgNum = 0; emgNum < 8; emgNum++ ) {
+              x.set( idx, emgNum, 0, preprocessedData[ emgNum ][ i ][ idx ] );
+            }
+          }
+          actualForce = force[ i ];
+
+          var predicted_values = net.forward( x );
+
+          if ( Math.round( predicted_values.w[ 0 ] ) == actualForce ) {
+            trueval += 1;
+            trainAccWindow.add( 1.0 );
+            predictedForce.push( Math.round( predicted_values.w[ 0 ] ) );
+          } else {
+            falseval += 1;
+            trainAccWindow.add( 0.0 );
+            predictedForce.push( Math.round( predicted_values.w[ 0 ] ) );
+          }
+        }
+        var accper = f2t( trainAccWindow.get_average() ) * 100;
+        totalAccuracy.push( Math.round( accper ) );
+        t = '';
+        t += 'Iteration Number: ' + ($( "#Iterations" )
+            .val() - iterations + 1);
+        t += '<br>'
+        t += 'Minimum Prediction Accuarcy: ' + ( totalAccuracy.reduce( function ( a, b ) {
+            return Math.min( a, b );
+          } ) ) + '%';
+        t += '<br>'
+        t += 'Average Prediction Accuarcy: ' + Math.round( (totalAccuracy.reduce( function ( a, b ) {
+            return a + b;
+          } ) / totalAccuracy.length) ) + '%';
+        t += '<br>'
+        t += 'Maximum Prediction Accuarcy: ' + ( totalAccuracy.reduce( function ( a, b ) {
+            return Math.max( a, b );
+          } ) ) + '%';
+        t += '<br>'
+        t += 'Current Prediction Accuarcy: ' + Math.round( accper ) + '%';
+        $( "#report" )
+          .html( t );
+
+      }
+
+      function change_net () {
+        var neuralNetwork = $( "#newnet" )
+          .val();
+        // later, to recreate the network:
+        var json = JSON.parse( neuralNetwork ); // creates json object out of a string
+        net = new convnetjs.Net(); // create an empty network
+        net.fromJSON( json ); // load all parameters from JSON
+        $( "#start" )
+          .removeClass( "disabled" )
+        $( "#buttonnn" )
+          .addClass( "disabled" )
+      }
+
+      function createResultTable () {
+        // Create table.
+        var table = document.createElement( 'table' );
+
+        var header = table.createTHead();
+        var row = header.insertRow( 0 );
+        var cell = row.insertCell( 0 );
+        cell.style.border = '1px solid black';
+        cell.innerHTML = "<b>Actual Force</b>";
+        var cell = row.insertCell( 1 );
+        cell.style.border = '1px solid black';
+        cell.innerHTML = "<b>Predicted Force</b>";
+
+        for ( var i = 0; i < force.length; i++ ) {
+          // Insert New Row for table at index '0'.
+          var row = table.insertRow( i + 1 );
+          // Insert New Column for Row1 at index '0'.
+          var rowcol1 = row.insertCell( 0 );
+          rowcol1.style.border = '1px solid black';
+          rowcol1.style.textAlign = 'center';
+          rowcol1.innerHTML = force[ i ];
+          // Insert New Column for Row1 at index '1'.
+          var rowcol2 = row.insertCell( 1 );
+          rowcol2.style.border = '1px solid black';
+          rowcol2.style.textAlign = 'center';
+          rowcol2.innerHTML = predictedForce[ i ];
+        }
+        table.style.borderCollapse = "collapse";
+        table.style.border = "1px solid black";
+
+        // Append Table into div.
+        jQuery( '#divTable' )
+          .html( '' );
+        var div = document.getElementById( 'divTable' );
+        div.appendChild( table );
+      }
+
+    </script>
+</body>
+</html>
